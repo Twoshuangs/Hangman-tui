@@ -1,0 +1,73 @@
+use random_word::Lang;
+use std::io;
+
+fn main() {
+    let word: String = random_word::get(Lang::En).to_string();
+    //println!("\n{}", word);
+
+    let mut blanks = vec!['_'; word.chars().count()];
+    println!("{}\n", blanks.iter().collect::<String>());
+
+    let mut lives: i32 = 10;
+    println!("You have 10 guesses. ");
+
+    'guessing: loop {
+        let guessedletter = input();
+        println!("You guessed: {}", guessedletter);
+
+        if check(&word, guessedletter, &mut blanks, &mut lives) {
+            println!("Congratulations");
+            break 'guessing;
+        }
+
+        if lives == 0 {
+            println!("\n You Die x_x");
+            println!("The word was {}.", word);
+            break 'guessing;
+        }
+    }
+}
+
+fn input() -> char {
+    println!("\nGuess a letter: ");
+    let guess: char;
+    'check: loop {
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read input");
+        let x = input.trim().to_string().len();
+
+        if x != 1 {
+            println!("Please only enter one letter");
+        } else {
+            guess = input.chars().next().unwrap();
+            break 'check;
+        }
+    }
+    return guess;
+}
+
+fn check(word: &String, guess: char, blanks: &mut Vec<char>, lives: &mut i32) -> bool {
+    if word.contains(guess) {
+        //position found letters
+        for (index, ch) in word.chars().enumerate() {
+            if ch == guess {
+                blanks[index] = guess;
+            }
+        }
+
+        println!("{}", blanks.iter().collect::<String>());
+
+        //check if all letters has been guessed
+        if blanks.contains(&'_') {
+            return false;
+        } else {
+            return true;
+        }
+    } else {
+        *lives = *lives - 1;
+        println!("You have {} guesses. ", lives);
+        return false;
+    }
+}

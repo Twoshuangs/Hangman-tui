@@ -1,0 +1,11 @@
+[package]
+name = "hangman"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+color-eyre = "0.6.5"
+crossterm = "0.29.0"
+random_word = { version = "0.5.2", features = ["en"]}
+ratatui = { version = "0.29.0", features = ["all-widgets"] }
+tokio = { version = "1.48", features = ["full"] }

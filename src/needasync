@@ -1,0 +1,142 @@
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use random_word::Lang;
+use ratatui::{
+    DefaultTerminal, Frame,
+    buffer::Buffer,
+    layout::Rect,
+    text::Text,
+    widgets::{Block, Paragraph, Widget},
+};
+use std::{io, vec};
+
+fn main() -> io::Result<()> {
+    let mut terminal = ratatui::init();
+
+    let word1 = "hangman".to_string();
+    let blanks = vec!['_'; word1.chars().count()];
+    //println!("{}\n", blanks.iter().collect::<String>());
+
+    let mut app = App {
+        exit: false,
+        word: word1,
+        guess: blanks,
+        lives: 10,
+    };
+
+    let app_result = app.run(&mut terminal);
+    ratatui::restore();
+    app_result
+}
+
+struct App {
+    exit: bool,
+    word: String,
+    guess: Vec<char>,
+    lives: i32,
+}
+
+impl App {
+    pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+        while !self.exit {
+            terminal.draw(|frame| self.draw(frame))?;
+            self.handle_events()?;
+        }
+        Ok(())
+    }
+
+    fn draw(&self, frame: &mut Frame) {
+        frame.render_widget(self, frame.area());
+    }
+
+    fn handle_events(&mut self) -> io::Result<()> {
+        match event::read()? {
+            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                self.handle_key_event(key_event)
+            }
+            _ => {}
+        };
+        Ok(())
+    }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) {
+        match key_event.code {
+            KeyCode::Char('Q') => self.exit(),
+            KeyCode::Char('N') => self.new_game(),
+            _ => {}
+        }
+    }
+
+    fn exit(&mut self) {
+        self.exit = true;
+    }
+
+    fn new_game(&mut self) {
+        self.word = random_word::get(Lang::En).to_string();
+        //println!("\n{}", word);
+
+        self.guess = vec!['_'; self.word.chars().count()];
+        //println!("{}\n", blanks.iter().collect::<String>());
+
+        'guessing: loop {
+            let guessedletter = self.input();
+
+            if self.check(guessedletter) {
+                println!("Congratulations");
+                break 'guessing;
+            }
+
+            if self.lives == 0 {
+                //self.die();
+                break 'guessing;
+            }
+        }
+    }
+
+    fn input(&mut self) -> char {
+        loop {
+            if let Ok(Event::Key(key_event)) = event::read() {
+                if let KeyCode::Char(c) = key_event.code {
+                    return c.to_ascii_lowercase();
+                }
+            }
+        }
+    }
+
+    fn check(&mut self, letter: char) -> bool {
+        if self.word.contains(letter) {
+            //position found letters
+            for (index, ch) in self.word.chars().enumerate() {
+                if ch == letter {
+                    self.guess[index] = letter;
+                }
+            }
+
+            if self.guess.contains(&'_') {
+                return false;
+            } else {
+                return true;
+            }
+        } else {
+            self.lives -= 1;
+            return false;
+        }
+    }
+
+    //fn die(&mut self) {
+    //        todo!()
+    //    }
+}
+
+impl Widget for &App {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        //lives remaining
+        let livesleft = Paragraph::new(Text::from(self.lives.to_string()))
+            .block(Block::bordered().title_top("Guesses remaining"))
+            .render(area, buf);
+
+        //blanks+guesses
+        let blanks = Paragraph::new(Text::from(self.guess.iter().collect::<String>()))
+            .block(Block::bordered().title_top("Guesses"))
+            .render(area, buf);
+    }
+}
