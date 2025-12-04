@@ -3,9 +3,9 @@ use random_word::Lang;
 use ratatui::{
     DefaultTerminal, Frame,
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Flex, Layout, Rect},
     text::Text,
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Block, Clear, Paragraph, Widget},
 };
 use std::io;
 
@@ -21,6 +21,9 @@ async fn main() -> io::Result<()> {
         word: word1,
         guess: blanks,
         lives: 10,
+        guessed: Vec::new(),
+        win: false,
+        popup: false,
     };
 
     app.run(&mut terminal)?;
@@ -34,6 +37,9 @@ struct App {
     word: String,
     guess: Vec<char>,
     lives: i32,
+    guessed: Vec<char>,
+    win: bool,
+    popup: bool,
 }
 
 impl App {
@@ -41,6 +47,9 @@ impl App {
         self.word = random_word::get(Lang::En).to_string();
         self.guess = vec!['_'; self.word.chars().count()];
         self.lives = 10;
+        self.guessed.clear();
+        self.win = false;
+        self.popup = false;
     }
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
@@ -68,8 +77,13 @@ impl App {
             KeyCode::Char('Q') => self.exit(),
             KeyCode::Char('N') => self.new_game(),
             KeyCode::Char(c) => {
-                let letter = c.to_ascii_lowercase();
-                self.check(letter);
+                if c.is_ascii_alphabetic() {
+                    let letter = c.to_ascii_lowercase();
+                    if self.check(letter) {
+                        self.win = true;
+                        self.popup = true;
+                    }
+                }
             }
             _ => {}
         }
@@ -77,6 +91,24 @@ impl App {
 
     fn draw(&self, frame: &mut Frame) {
         frame.render_widget(self, frame.area());
+
+        let notif = if self.win {
+            "Congratulations. \nYou have found the word.".to_owned()
+        } else {
+            "You died x_x. \nThe word was ".to_string() + self.word.clone().as_str()
+        };
+        let notiftext = Text::from(notif.clone());
+
+        if self.popup {
+            let popup = Paragraph::new(notif).block(Block::bordered()).centered();
+            let area = center(
+                frame.area(),
+                Constraint::Length(notiftext.width() as u16 + 4),
+                Constraint::Length(4),
+            );
+            frame.render_widget(Clear, area);
+            frame.render_widget(popup, area);
+        };
     }
 
     fn exit(&mut self) {
@@ -92,7 +124,12 @@ impl App {
             }
             !self.guess.contains(&'_')
         } else {
-            self.lives -= 1;
+            self.guessed.push(letter);
+            if self.lives == 0 {
+                self.popup = true;
+            } else {
+                self.lives -= 1;
+            }
             false
         }
     }
@@ -100,24 +137,38 @@ impl App {
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let gamearea = center(area, Constraint::Percentage(60), Constraint::Percentage(40));
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![
-                Constraint::Percentage(30),
-                Constraint::Percentage(10),
-                Constraint::Percentage(30),
-                Constraint::Percentage(30),
-            ])
-            .split(area);
+            .constraints(vec![Constraint::Percentage(30), Constraint::Percentage(70)])
+            .split(gamearea);
+
+        let inner_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(vec![Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(layout[0]);
 
         Paragraph::new(Text::from(self.lives.to_string()))
-            .block(Block::bordered().title_top("Guesses remaining"))
+            .block(Block::bordered().title_top("Guesses \nremaining"))
             .centered()
-            .render(layout[1], buf);
+            .render(inner_layout[0], buf);
+        Paragraph::new(Text::from(self.guessed.iter().collect::<String>()))
+            .block(Block::bordered().title_top("Alr guessed"))
+            .centered()
+            .render(inner_layout[1], buf);
 
         Paragraph::new(Text::from(self.guess.iter().collect::<String>()))
             .block(Block::bordered().title_top("Hangman"))
             .centered()
-            .render(layout[2], buf);
+            .render(layout[1], buf);
     }
+}
+
+fn center(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
+    let [area] = Layout::horizontal([horizontal])
+        .flex(Flex::Center)
+        .areas(area);
+    let [area] = Layout::vertical([vertical]).flex(Flex::Center).areas(area);
+    area
 }
