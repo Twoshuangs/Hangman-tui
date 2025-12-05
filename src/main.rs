@@ -5,16 +5,36 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Flex, Layout, Rect},
     text::Text,
-    widgets::{Block, Clear, Paragraph, Widget},
+    widgets::{Block, Clear, Paragraph, Widget, Wrap},
 };
+use serde::{Deserialize, Serialize};
+use serde_json;
+use std::fs;
 use std::io;
+use std::path::PathBuf;
+extern crate dirs;
 
-#[tokio::main]
-async fn main() -> io::Result<()> {
+const DEFAULT_STAT: &'static str = r#"{
+    "won": 0,
+    "lost": 0,
+    "average": 0
+}"#;
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Stats {
+    won: u32,
+    lost: u32,
+    average: f64,
+}
+
+fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
 
     let word1 = "hangman".to_string();
     let blanks = vec!['_'; word1.chars().count()];
+
+    let confloc: PathBuf = dirs::config_dir().expect("Can't find config location");
+    check_config(&confloc);
 
     let mut app = App {
         exit: false,
@@ -24,6 +44,9 @@ async fn main() -> io::Result<()> {
         guessed: Vec::new(),
         win: false,
         popup: false,
+        stats: false,
+        statstruct: get_stats(&confloc),
+        //config_path: confloc,
     };
 
     app.run(&mut terminal)?;
@@ -40,6 +63,9 @@ struct App {
     guessed: Vec<char>,
     win: bool,
     popup: bool,
+    stats: bool,
+    statstruct: Stats,
+    //config_path: PathBuf,
 }
 
 impl App {
@@ -56,7 +82,6 @@ impl App {
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
 
-            // Non-blocking input
             if let Ok(true) = event::poll(std::time::Duration::from_millis(50)) {
                 if let Ok(Event::Key(key_event)) = event::read() {
                     if key_event.kind == KeyEventKind::Press {
@@ -64,10 +89,6 @@ impl App {
                     }
                 }
             }
-
-            //if self.lives > 0 && !self.guess.contains(&'_') {
-            //    self.win();
-            //}
         }
         Ok(())
     }
@@ -76,10 +97,25 @@ impl App {
         match key_event.code {
             KeyCode::Char('Q') => self.exit(),
             KeyCode::Char('N') => self.new_game(),
+            KeyCode::Char('S') => {
+                if self.stats {
+                    self.stats = false
+                } else {
+                    self.stats = true
+                }
+            }
             KeyCode::Char(c) => {
                 if c.is_ascii_alphabetic() {
                     let letter = c.to_ascii_lowercase();
                     if self.check(letter) {
+                        self.statstruct.won += 1;
+                        if self.statstruct.lost == 0 {
+                            self.statstruct.average = 1.0;
+                        } else {
+                            self.statstruct.average = self.statstruct.won as f64
+                                / (self.statstruct.lost + self.statstruct.won) as f64
+                                * 100.0;
+                        };
                         self.win = true;
                         self.popup = true;
                     }
@@ -109,9 +145,33 @@ impl App {
             frame.render_widget(Clear, area);
             frame.render_widget(popup, area);
         };
+
+        let stats_text = format!(
+            "\nGames won: {}\nGames lost: {}\n Win rate: {}%",
+            self.statstruct.won,
+            self.statstruct.lost,
+            self.statstruct.average.ceil()
+        );
+
+        if self.stats {
+            let popup = Paragraph::new(stats_text)
+                .block(Block::bordered())
+                .centered();
+            let area = center(
+                frame.area(),
+                Constraint::Percentage(60),
+                Constraint::Percentage(40),
+            );
+            frame.render_widget(Clear, area);
+            frame.render_widget(popup, area);
+        }
     }
 
     fn exit(&mut self) {
+        save_stats(
+            &self.statstruct,
+            &dirs::config_dir().expect("Can't find config location"),
+        );
         self.exit = true;
     }
 
@@ -125,7 +185,16 @@ impl App {
             !self.guess.contains(&'_')
         } else {
             self.guessed.push(letter);
-            if self.lives == 0 {
+            if self.lives == 1 {
+                self.lives -= 1;
+                self.statstruct.lost += 1;
+                if self.statstruct.lost == 0 {
+                    self.statstruct.average = 1.0;
+                } else {
+                    self.statstruct.average = self.statstruct.won as f64
+                        / (self.statstruct.lost + self.statstruct.won) as f64
+                        * 100.0;
+                };
                 self.popup = true;
             } else {
                 self.lives -= 1;
@@ -141,7 +210,11 @@ impl Widget for &App {
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Percentage(30), Constraint::Percentage(70)])
+            .constraints(vec![
+                Constraint::Percentage(30),
+                Constraint::Percentage(65),
+                Constraint::Percentage(5),
+            ])
             .split(gamearea);
 
         let inner_layout = Layout::default()
@@ -162,6 +235,11 @@ impl Widget for &App {
             .block(Block::bordered().title_top("Hangman"))
             .centered()
             .render(layout[1], buf);
+        Paragraph::new(Text::from(
+            "<shift-n>: new game | <shift-s>: view stats | <shift-q>: quit",
+        ))
+        .wrap(Wrap { trim: true })
+        .render(layout[2], buf);
     }
 }
 
@@ -171,4 +249,46 @@ fn center(area: Rect, horizontal: Constraint, vertical: Constraint) -> Rect {
         .areas(area);
     let [area] = Layout::vertical([vertical]).flex(Flex::Center).areas(area);
     area
+}
+
+fn check_config(conf_locs: &PathBuf) {
+    let mut config = conf_locs.clone();
+    config.push("hangman");
+    config.push("stats.json");
+    match fs::exists(config) {
+        Ok(true) => return,
+        Ok(false) => generate_config(conf_locs),
+        Err(_) => println!("Can't check for exisiting stats"),
+    };
+}
+
+fn get_stats(conf_locs: &PathBuf) -> Stats {
+    let mut path = conf_locs.clone();
+    path.push("hangman");
+    path.push("stats.json");
+    let data = fs::read_to_string(&path).unwrap();
+    serde_json::from_str::<Stats>(&data).unwrap()
+}
+
+fn save_stats(stats: &Stats, conf_locs: &PathBuf) {
+    let mut path = conf_locs.clone();
+    path.push("hangman");
+    path.push("stats.json");
+
+    let json = serde_json::to_string_pretty(&stats).unwrap();
+    let _ = fs::write(path, json);
+}
+
+fn generate_config(conf_locs: &PathBuf) {
+    let mut config: PathBuf = conf_locs.clone();
+    config.push("hangman");
+    match fs::create_dir(&config) {
+        Ok(()) => println!("Directory created"),
+        Err(e) => println!("Failed to create directory: {:?}", e.kind()),
+    };
+    config.push("stats.json");
+    match fs::write(config, DEFAULT_STAT) {
+        Ok(()) => println!("Stats loaded"),
+        Err(_) => println!("Can't write file"),
+    };
 }
